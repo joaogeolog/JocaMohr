@@ -1,140 +1,99 @@
 import streamlit as st
 import numpy as np
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 
-# Configuração da Página
+# Configuração da página para eliminar margens escuras
 st.set_page_config(page_title="JocaMohr", layout="centered")
 
-# --- INICIALIZAÇÃO DO HISTÓRICO (STRESS PATH) ---
-if 'history' not in st.session_state:
-    st.session_state.history = []
-if 'regime' not in st.session_state:
-    st.session_state.regime = 'Normal'
+# CSS para garantir que o fundo seja sempre branco e centralizado
+st.markdown("""
+    <style>
+    .main { background-color: white; }
+    div.block-container { padding-top: 1rem; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# Título
+# Título JocaMohr
 st.markdown("<h1 style='text-align: center; color: #2c3e50;'>JocaMohr</h1>", unsafe_allow_html=True)
 
-# --- BARRA LATERAL (CONTROLES) ---
+# --- SIDEBAR COM OS CONTROLES ---
+# Colocando na sidebar, o visual no celular fica mais limpo e a imagem ganha destaque
 with st.sidebar:
-    st.header("Configurações")
-    
-    # Botão Reset
-    if st.button("RESET"):
-        st.session_state.history = []
-        st.rerun()
-
-    s1 = st.slider("σ1 (MPa)", 0, 200, 120)
-    s3 = st.slider("σ3 (MPa)", 0, 200, 40)
+    st.header("Parâmetros")
+    s1 = st.slider(r"$\sigma_1$ (MPa)", 0, 200, 120)
+    s3 = st.slider(r"$\sigma_3$ (MPa)", 0, 200, 40)
     pp = st.slider("Pporos (MPa)", 0, 100, 20)
     alpha = st.slider("Biot", 0.0, 1.0, 1.0)
     st.divider()
     coesao = st.slider("Coesão (MPa)", 0, 50, 10)
-    phi_deg = st.slider("Ang.Atrito (°)", 0, 60, 30)
+    phi = st.slider("Ang.Atrito (°)", 0, 60, 30)
     st.divider()
     mergulho = st.slider("Mergulho (°)", 0, 90, 60)
-    giro = st.slider("Giro View (°)", 0, 360, 45)
+    giro = st.slider("Giro (°)", 0, 360, 45)
+    regime = st.radio("Regime:", ["Normal", "Reverso"], horizontal=True)
 
-# --- BOTÕES DE REGIME (NORMAL / REVERSO) ---
-col_btn1, col_btn2 = st.columns(2)
-with col_btn1:
-    if st.button("NORMAL", use_container_width=True):
-        st.session_state.regime = 'Normal'
-with col_btn2:
-    if st.button("REVERSO", use_container_width=True):
-        st.session_state.regime = 'Reverso'
+# --- CÁLCULOS ---
+s1_eff, s3_eff = s1 - (alpha * pp), s3 - (alpha * pp)
+centro, raio = (s1_eff + s3_eff) / 2, (s1_eff - s3_eff) / 2
+theta_rel = mergulho if regime == "Normal" else 90 - mergulho
+theta_m = np.radians(2 * theta_rel)
+sn = centro + raio * np.cos(theta_m)
+tn = abs(raio * np.sin(theta_m))
+resistencia = coesao + sn * np.tan(np.radians(phi))
+tn_real = min(tn, resistencia)
+fs = resistencia / tn if tn > 0.1 else 10.0
 
-regime = st.session_state.regime
+# --- GERAÇÃO DA FIGURA (IDÊNTICA À FOTO) ---
+fig = plt.figure(figsize=(8, 11), facecolor='white')
 
-# --- LÓGICA DE CÁLCULO ---
-s1_eff = max(s1 - (alpha * pp), 0)
-s3_eff = max(s3 - (alpha * pp), 0)
-if s1_eff < s3_eff: s1_eff, s3_eff = s3_eff, s1_eff # Garantir s1 > s3
+# 1. Cilindro 3D
+ax1 = fig.add_subplot(211, projection='3d')
+ax1.set_axis_off()
+ax1.view_init(elev=15, azim=giro)
 
-centro = (s1_eff + s3_eff) / 2
-raio = (s1_eff - s3_eff) / 2
-
-# Ângulo relativo ao regime
-theta_rel = mergulho if regime == 'Normal' else 90 - mergulho
-theta_mohr = np.radians(2 * theta_rel)
-
-sn = centro + raio * np.cos(theta_mohr)
-tn = abs(raio * np.sin(theta_mohr))
-tau_lim = coesao + sn * np.tan(np.radians(phi_deg))
-tn_real = min(tn, tau_lim)
-
-# Atualizar Stress Path
-ponto_atual = (float(sn), float(tn_real))
-if not st.session_state.history or np.linalg.norm(np.array(ponto_atual) - np.array(st.session_state.history[-1])) > 0.5:
-    st.session_state.history.append(ponto_atual)
-
-# --- GRÁFICO 3D ---
-z = np.linspace(-1, 1, 20)
-theta = np.linspace(0, 2*np.pi, 20)
-theta_grid, z_grid = np.meshgrid(theta, z)
-x_cil, y_cil = 0.7 * np.cos(theta_grid), 0.7 * np.sin(theta_grid)
-
-fig3d = go.Figure()
-fig3d.add_trace(go.Surface(x=x_cil, y=y_cil, z=z_grid, opacity=0.1, showscale=False, colorscale=[[0, 'grey'], [1, 'grey']]))
+u, v = np.linspace(0, 2*np.pi, 30), np.linspace(-1, 1, 30)
+U, V = np.meshgrid(u, v)
+XC, YC, ZC = 0.7 * np.cos(U), 0.7 * np.sin(U), V
+ax1.plot_surface(XC, YC, ZC, color='lightgrey', alpha=0.1)
 
 # Plano de Falha
-xp = np.linspace(-0.7, 0.7, 15)
-yp = np.linspace(-0.7, 0.7, 15)
-XP, YP = np.meshgrid(xp, yp)
+xp_v = np.linspace(-0.7, 0.7, 40)
+XP, YP = np.meshgrid(xp_v, xp_v)
 ZP = np.tan(np.radians(mergulho)) * XP
 mask = XP**2 + YP**2 <= 0.7**2
-ZP[~mask] = np.nan
-fig3d.add_trace(go.Surface(x=XP, y=YP, z=ZP, colorscale='Oranges', showscale=False, opacity=0.8))
+XP[~mask], YP[~mask], ZP[~mask] = np.nan, np.nan, np.nan
+ax1.plot_surface(XP, YP, ZP, color='#ff7f0e', alpha=0.6, edgecolors='k', lw=0.1)
 
 # Vetores
-scale = 0.8 / 200
+ax1.quiver([0, 0], [0, 0], [1.2, -1.2], [0, 0], [0, 0], [-0.3, 0.3], color='red', lw=3)
+scale = 0.5 / 200
 m_rad = np.radians(mergulho)
-nx, nz = -np.sin(m_rad)*sn*scale, np.cos(m_rad)*sn*scale
-tx, tz = np.cos(m_rad)*tn_real*scale, np.sin(m_rad)*tn_real*scale
+ax1.quiver(0, 0, 0, -np.sin(m_rad)*sn*scale, 0, np.cos(m_rad)*sn*scale, color='black', lw=5)
+ax1.quiver(0, 0, 0, np.cos(m_rad)*tn_real*scale, 0, np.sin(m_rad)*tn_real*scale, color='blue', lw=5)
 
-fig3d.add_trace(go.Scatter3d(x=[0, nx], y=[0, 0], z=[0, nz], mode='lines', line=dict(color='black', width=8)))
-fig3d.add_trace(go.Scatter3d(x=[0, tx], y=[0, 0], z=[0, tz], mode='lines', line=dict(color='blue', width=8)))
+ax1.set_zlim(-1.1, 0.7)
+ax1.set_box_aspect([1, 1, 1])
 
-fig3d.update_layout(
-    scene=dict(xaxis=dict(visible=False), yaxis=dict(visible=False), 
-               zaxis=dict(range=[-1.05, 1.5], visible=False), aspectmode='cube',
-               camera=dict(eye=dict(x=1.5*np.cos(np.radians(giro)), y=1.5*np.sin(np.radians(giro)), z=0.8))),
-    margin=dict(l=0, r=0, b=0, t=0), height=400, showlegend=False
-)
-st.plotly_chart(fig3d, use_container_width=True)
+# 2. Círculo de Mohr
+ax2 = fig.add_subplot(212)
+t_c = np.linspace(0, np.pi, 200)
+x_c, y_c = centro + raio * np.cos(t_c), raio * np.sin(t_c)
+res_c = coesao + x_c * np.tan(np.radians(phi))
+y_f = np.clip(y_c, 0, res_c)
+mask_fail = y_c > res_c
 
-# --- STATUS ---
-fs = tau_lim / tn if tn > 0.1 else 10.0
-cor_fs = "red" if fs < 1.0 else "green"
-st.markdown(f"<h3 style='text-align: center; color: {cor_fs};'>FS: {fs:.2f} | Regime: {regime}</h3>", unsafe_allow_html=True)
+ax2.plot(x_c[~mask_fail], y_f[~mask_fail], color='#1f77b4', lw=2)
+ax2.plot(x_c[mask_fail], y_f[mask_fail], color='red', lw=4)
+ax2.plot(np.linspace(0, 200, 100), coesao + np.linspace(0, 200, 100) * np.tan(np.radians(phi)), 'r--', lw=2)
+ax2.plot(sn, tn_real, 'go', markersize=10, markeredgecolor='k')
 
-# --- GRÁFICO DE MOHR COM STRESS PATH ---
-t_circ = np.linspace(0, np.pi, 200)
-x_circ, y_circ = centro + raio * np.cos(t_circ), raio * np.sin(t_circ)
-x_env = np.linspace(0, 200, 100)
-y_env = coesao + x_env * np.tan(np.radians(phi_deg))
+# Texto de Status
+cor_fs = 'red' if fs <= 1.0 else 'green'
+ax2.text(0.05, 0.9, f"FS: {fs:.2f} | {regime}", transform=ax2.transAxes, color=cor_fs, fontsize=14, fontweight='bold')
+ax2.set_xlim(0, 200); ax2.set_ylim(0, 100)
+ax2.set_xticks(np.arange(0, 201, 20)); ax2.set_yticks(np.arange(0, 101, 20))
+ax2.grid(True, ls=':', alpha=0.4)
+ax2.set_xlabel(r"$\sigma_n$ (MPa)"); ax2.set_ylabel(r"$\tau$ (MPa)")
 
-res_circ = coesao + x_circ * np.tan(np.radians(phi_deg))
-y_fisico = np.where(y_circ > res_circ, res_circ, y_circ)
-
-fig_mohr = go.Figure()
-
-# Círculo
-fig_mohr.add_trace(go.Scatter(x=x_circ, y=y_fisico, mode='lines', line=dict(color='#1f77b4', width=2)))
-
-# Stress Path (Histórico)
-if len(st.session_state.history) > 1:
-    h_x, h_y = zip(*st.session_state.history)
-    fig_mohr.add_trace(go.Scatter(x=h_x, y=h_y, mode='lines', line=dict(color='black', width=1, dash='dot'), opacity=0.5))
-
-# Envoltória
-fig_mohr.add_trace(go.Scatter(x=x_env, y=y_env, mode='lines', line=dict(color='red', dash='dash')))
-
-# Ponto Atual
-fig_mohr.add_trace(go.Scatter(x=[sn], y=[tn_real], mode='markers', marker=dict(color='green', size=12, line=dict(width=1, color='black'))))
-
-fig_mohr.update_layout(
-    xaxis=dict(title="σn (MPa)", range=[0, 200], dtick=20, gridcolor='lightgrey', showline=True, linecolor='black'),
-    yaxis=dict(title="τ (MPa)", range=[0, 100], dtick=20, gridcolor='lightgrey', showline=True, linecolor='black'),
-    plot_bgcolor='white', height=500, showlegend=False, margin=dict(l=40, r=20, t=20, b=40)
-)
-st.plotly_chart(fig_mohr, use_container_width=True)
+# Mostra no link
+st.pyplot(fig)
